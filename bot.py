@@ -13,6 +13,7 @@ import logging
 
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 ALLOWED_ROLE_NAME = os.environ.get("ALLOWED_ROLE_NAME")
+BACKUP_DISK_PATH = os.environ.get("BACKUP_DISK_PATH")
 
 message_queue = asyncio.Queue()
 
@@ -110,7 +111,7 @@ class DiscordBot(discord.Client):
         self.websocket_clients = []
         self.channels = []
         self.client = None
-        self.confirmation_message = True
+        self.confirmation_message = False
 
     async def send_message_to_channels(self, message):
         for channel in self.channels:
@@ -132,6 +133,21 @@ class DiscordBot(discord.Client):
 
     async def on_ready(self):
         self.client = WebSocketClient()
+        if os.path.exists(f'{BACKUP_DISK_PATH}/clients.json') and os.path.exists(f'{BACKUP_DISK_PATH}/channels.json'):
+            with open(f'{BACKUP_DISK_PATH}/clients.json', 'r') as f:
+                    clients = json.loads(f.read())
+            with open(f'{BACKUP_DISK_PATH}/channels.json', 'r') as f:
+                channels = json.loads(f.read())
+            self.client.client_list = []
+            self.channels = []
+            for client in clients:
+                self.client.client_list.append(client)
+            for channel_id, guild_id in channels:
+                guild = discord.utils.get(self.guilds, id=guild_id)
+                if guild:
+                    channel = discord.utils.get(guild.channels, id=channel_id)
+                    if channel:
+                        self.channels.append(channel)
         self.client.run()
         logging.info(f'We have logged in as {self.user}')
 
@@ -212,16 +228,19 @@ class DiscordBot(discord.Client):
                 await message.channel.send("Disabled confirmation message.")
 
             elif message.content.startswith('!backup'):
-                with open('clients.json', 'w') as f:
+                with open(f'{BACKUP_DISK_PATH}/clients.json', 'w') as f:
                     f.write(json.dumps(self.client.client_list))
-                with open('channels.json', 'w') as f:
+                with open(f'{BACKUP_DISK_PATH}/channels.json', 'w') as f:
                     f.write(json.dumps([(channel.id, channel.guild.id) for channel in self.channels]))
                 await message.channel.send("Backed up clients and channels and guilds to file.")
             
             elif message.content.startswith('!restore'):
-                with open('clients.json', 'r') as f:
+                if not os.path.exists(f'{BACKUP_DISK_PATH}/clients.json') or not os.path.exists(f'{BACKUP_DISK_PATH}/channels.json'):
+                    await message.channel.send("No backup found.")
+                    return
+                with open(f'{BACKUP_DISK_PATH}/clients.json', 'r') as f:
                     clients = json.loads(f.read())
-                with open('channels.json', 'r') as f:
+                with open(f'{BACKUP_DISK_PATH}/channels.json', 'r') as f:
                     channels = json.loads(f.read())
                 self.client.client_list = []
                 self.channels = []
