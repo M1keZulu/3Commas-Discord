@@ -119,17 +119,15 @@ class DiscordBot(discord.Client):
 
     async def send_message(self):
         while(True):
-            try:
-                message = message_queue.get_nowait()
+            message = await message_queue.get()
+            if message:
                 logging.info(message)
                 if self.confirmation_message and message.startswith("Subscription with"):
                     await self.send_message_to_channels(message)
                 elif not message.startswith("Subscription with"):
                     await self.send_message_to_channels(message)
                 message_queue.task_done()
-            except Exception as e:
-                pass
-            await asyncio.sleep(0)
+            
 
     async def on_ready(self):
         self.client = WebSocketClient()
