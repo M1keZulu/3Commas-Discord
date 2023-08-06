@@ -7,12 +7,12 @@ import json
 import hashlib
 import hmac
 import requests
-from dotenv import load_dotenv
 import os
+import google.cloud.logging
+import logging
 
-load_dotenv()
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-ALLOWED_ROLE_NAME = os.getenv("ALLOWED_ROLE_NAME")
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
+ALLOWED_ROLE_NAME = os.environ.get("ALLOWED_ROLE_NAME")
 
 message_queue = asyncio.Queue()
 
@@ -40,13 +40,12 @@ class WebSocketClient:
             if client['name'] == name:
                 self.client_list.remove(client)
                 self.ws.close()
-                print(f"Removed {name} from the list of clients.")
+                logging.info(f"Removed {name} from the list of clients.")
                 return
 
     def on_message(self, ws, recv_message):
         data=json.loads(recv_message)
         identifier = None
-        print(data)
 
         if 'identifier' in data:
             identifier = json.loads(data['identifier'])
@@ -73,10 +72,10 @@ class WebSocketClient:
                 message_queue.put_nowait(f"{pair} {msg}")
 
     def on_error(self, ws, error):
-        print(f"Error from {self.url}: {error}")
+        logging.info(f"Error from {self.url}: {error}")
 
     def on_close(self, ws, close_status_code, close_msg):
-        print(f"Connection closed for {self.url}.")
+        logging.info(f"Connection closed for {self.url}.")
 
     def on_open(self, ws):
         for client in self.client_list:
@@ -90,7 +89,7 @@ class WebSocketClient:
                 ],
             }
             self.ws.send(json.dumps({"identifier": json.dumps(identifier), "command": "subscribe"}))
-        print(f"Connected to {self.url}")
+        logging.info(f"Connected to {self.url}")
 
     def connect_to_websocket(self):
         self.ws = websocket.WebSocketApp(self.url,
@@ -98,7 +97,7 @@ class WebSocketClient:
                                          on_error=self.on_error,
                                          on_close=self.on_close,
                                          on_open=self.on_open)
-        thread = threading.Thread(target=self.ws.run_forever, kwargs={'reconnect': 2, 'ping_interval': 60})
+        thread = threading.Thread(target=self.ws.run_forever, kwargs={'reconnect': 1, 'ping_interval': 60})
         thread.daemon = True
         thread.start()
 
@@ -121,6 +120,7 @@ class DiscordBot(discord.Client):
         while(True):
             try:
                 message = message_queue.get_nowait()
+                logging.info(message)
                 if self.confirmation_message and message.startswith("Subscription with"):
                     await self.send_message_to_channels(message)
                 elif not message.startswith("Subscription with"):
@@ -133,7 +133,7 @@ class DiscordBot(discord.Client):
     async def on_ready(self):
         self.client = WebSocketClient()
         self.client.run()
-        print(f'We have logged in as {self.user}')
+        logging.info(f'We have logged in as {self.user}')
 
     async def on_message(self, message):
         if message.author == self.user:
@@ -237,9 +237,9 @@ class DiscordBot(discord.Client):
 
             elif message.content.startswith('!help'):
                 help_message = (
-                    "!start_connection <name> <api_key> <secret_key>: Start a new WebSocket connection.\n"
-                    "!stop_connection <name>: Stop an existing WebSocket connection.\n"
-                    "!list_connections: List all active WebSocket connections.\n"
+                    "!subscribe <name> <api_key> <secret_key>: Subscribe to a new account.\n"
+                    "!unsubscribe <name>: Unsubscribe from an account.\n"
+                    "!list_subscriptions: List all active subscriptions.\n"
                     "!add_channel <channel_name>: Add a channel to send messages to.\n"
                     "!remove_channel <channel_name>: Remove a channel to send messages to.\n"
                     "!list_channels: List all channels to send messages to.\n"
@@ -248,12 +248,19 @@ class DiscordBot(discord.Client):
                     "!disable_confirmation: Disable confirmation message.\n"
                     "!backup: Backup clients and channels to file.\n"
                     "!restore: Restore clients and channels from file.\n"
+                    "!help: Show this message.\n"
                 )
                 await message.channel.send(help_message)
         else:
             await message.channel.send("You don't have permission to use WebSocket commands.")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    if int(os.getenv("PRODUCTION", 0)) == 1:
+        logging_client = google.cloud.logging.Client()
+        logging_client.setup_logging()
+        logging.info("Logging client setup.")
+
     bot = DiscordBot()
     loop = asyncio.get_event_loop()
     loop.create_task(bot.start(DISCORD_BOT_TOKEN))
