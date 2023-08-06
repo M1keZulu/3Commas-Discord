@@ -1,6 +1,5 @@
 import discord
 import websocket
-import asyncio
 import time
 import threading
 import json
@@ -9,12 +8,14 @@ import hmac
 import requests
 from dotenv import load_dotenv
 import os
+import queue
+import asyncio
 
 load_dotenv()
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 ALLOWED_ROLE_NAME = os.getenv("ALLOWED_ROLE_NAME")
 
-message_queue = asyncio.Queue()
+message_queue = queue.Queue()
 
 class WebSocketClient:
     def __init__(self):
@@ -46,31 +47,32 @@ class WebSocketClient:
     def on_message(self, ws, recv_message):
         data=json.loads(recv_message)
         identifier = None
-        print(data)
 
-        if 'identifier' in data:
-            identifier = json.loads(data['identifier'])
+        message_queue.put_nowait(recv_message)
 
-        if 'message' in data:
-            message = data['message']
+        # if 'identifier' in data:
+        #     identifier = json.loads(data['identifier'])
+
+        # if 'message' in data:
+        #     message = data['message']
         
-        if 'type' in data and data['type'] == 'confirm_subscription':
-            for client in self.client_list:
-                if client['api_key'] == identifier['users'][0]['api_key'] and hmac.new(client['secret_key'].encode(), b"/deals", hashlib.sha256).hexdigest() == identifier['users'][0]['signature']:
-                    message_queue.put_nowait(f"Subscription with {client['name']} confirmed.")
-                    break
-        elif 'type' in data and data['type'] == 'reject_subscription':
-            for client in self.client_list:
-                if client['api_key'] == identifier['users'][0]['api_key'] and hmac.new(client['secret_key'].encode(), b"/deals", hashlib.sha256).hexdigest() == identifier['users'][0]['signature']:
-                    message_queue.put_nowait(f"Subscription with {client['name']} rejected.")
-                    self.client_list.remove(client)
-                    break
-        elif 'message' in data and 'type' in str(message) and message['type'] == 'Deal':
-            pair = message['pair']
-            if "Closed at" in message['bot_events'][-1]['message']:
-                pair = pair.replace('_', '/')
-                msg = message['bot_events'][-1]['message']
-                message_queue.put_nowait(f"{pair} {msg}")
+        # if 'type' in data and data['type'] == 'confirm_subscription':
+        #     for client in self.client_list:
+        #         if client['api_key'] == identifier['users'][0]['api_key'] and hmac.new(client['secret_key'].encode(), b"/deals", hashlib.sha256).hexdigest() == identifier['users'][0]['signature']:
+        #             message_queue.put(f"Subscription with {client['name']} confirmed.")
+        #             break
+        # elif 'type' in data and data['type'] == 'reject_subscription':
+        #     for client in self.client_list:
+        #         if client['api_key'] == identifier['users'][0]['api_key'] and hmac.new(client['secret_key'].encode(), b"/deals", hashlib.sha256).hexdigest() == identifier['users'][0]['signature']:
+        #             message_queue.put(f"Subscription with {client['name']} rejected.")
+        #             self.client_list.remove(client)
+        #             break
+        # elif 'message' in data and 'type' in str(message) and message['type'] == 'Deal':
+        #     pair = message['pair']
+        #     if "Closed at" in message['bot_events'][-1]['message']:
+        #         pair = pair.replace('_', '/')
+        #         msg = message['bot_events'][-1]['message']
+        #         message_queue.put(f"{pair} {msg}")
 
     def on_error(self, ws, error):
         print(f"Error from {self.url}: {error}")
@@ -118,21 +120,16 @@ class DiscordBot(discord.Client):
             await channel.send(message)
 
     async def send_message(self):
-        while(True):
-            try:
-                message = message_queue.get_nowait()
-                if self.confirmation_message and message.startswith("Subscription with"):
-                    await self.send_message_to_channels(message)
-                elif not message.startswith("Subscription with"):
-                    await self.send_message_to_channels(message)
-                message_queue.task_done()
-            except Exception as e:
-                pass
-            await asyncio.sleep(0)
+        while True:
+            message = message_queue.get()
+            print(message)
+            await self.send_message_to_channels(message)
+            message_queue.task_done()
 
     async def on_ready(self):
         self.client = WebSocketClient()
         self.client.run()
+        asyncio.create_task(self.send_message())
         print(f'We have logged in as {self.user}')
 
     async def on_message(self, message):
@@ -153,7 +150,6 @@ class DiscordBot(discord.Client):
                         return
                 self.client.subscribe(name, api_key, secret_key)
                 await message.channel.send(f"Trying to connect with {name}. If the connection is not successful, you will be notified.")
-
 
             elif message.content.startswith('!unsubscribe'):
                 name = message.content.split()[1]
@@ -255,7 +251,6 @@ class DiscordBot(discord.Client):
 
 if __name__ == "__main__":
     bot = DiscordBot()
-    loop = asyncio.get_event_loop()
-    loop.create_task(bot.start(DISCORD_BOT_TOKEN))
-    loop.create_task(bot.send_message())
-    loop.run_forever()
+    bot.run(DISCORD_BOT_TOKEN)
+
+    
