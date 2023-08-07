@@ -68,10 +68,15 @@ class WebSocketClient:
         elif 'message' in data and 'type' in str(message) and message['type'] == 'Deal':
             pair = message['pair']
             pair = pair.replace('_', '/')
+            name = ""
             for closed_event in message['bot_events']:
                 if "Closed at" in closed_event['message']:
                     msg = closed_event['message']
-                    message_queue.put_nowait(f"{pair} {msg}")
+                    for client in self.client_list:
+                        if client['api_key'] == identifier['users'][0]['api_key'] and hmac.new(client['secret_key'].encode(), b"/deals", hashlib.sha256).hexdigest() == identifier['users'][0]['signature']:
+                            name = client['name']
+                            break
+                    message_queue.put_nowait(f"{name}: {pair} {msg} with MARCO POLO")
 
     def on_error(self, ws, error):
         logging.info(f"Error from {self.url}: {error}")
@@ -176,7 +181,7 @@ class DiscordBot(discord.Client):
                         await message.channel.send(f"Subscription with {name} stopped.")
                         self.client.run()
                         return
-                await message.channel.send(f"WebSocket connection with {name} not found.")
+                await message.channel.send(f"Subscription with {name} not found.")
 
             elif message.content.startswith('!ping'):
                 await message.channel.send("Pong!")
