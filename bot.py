@@ -67,10 +67,11 @@ class WebSocketClient:
                     break
         elif 'message' in data and 'type' in str(message) and message['type'] == 'Deal':
             pair = message['pair']
-            if "Closed at" in message['bot_events'][-1]['message']:
-                pair = pair.replace('_', '/')
-                msg = message['bot_events'][-1]['message']
-                message_queue.put_nowait(f"{pair} {msg}")
+            pair = pair.replace('_', '/')
+            for closed_event in message['bot_events']:
+                if "Closed at" in closed_event['message']:
+                    msg = closed_event['message']
+                    message_queue.put_nowait(f"{pair} {msg}")
 
     def on_error(self, ws, error):
         logging.info(f"Error from {self.url}: {error}")
@@ -128,7 +129,6 @@ class DiscordBot(discord.Client):
                     await self.send_message_to_channels(message)
                 message_queue.task_done()
             
-
     async def on_ready(self):
         self.client = WebSocketClient()
         if os.path.exists(f'{BACKUP_DISK_PATH}/clients.json') and os.path.exists(f'{BACKUP_DISK_PATH}/channels.json'):
@@ -156,7 +156,6 @@ class DiscordBot(discord.Client):
         if not message.content.startswith('!'):
             return
 
-        # Check if the user has the allowed role
         allowed_role = discord.utils.get(message.guild.roles, name=ALLOWED_ROLE_NAME)
         if allowed_role and allowed_role in message.author.roles:
             if message.content.startswith('!subscribe'):
@@ -180,7 +179,7 @@ class DiscordBot(discord.Client):
                 await message.channel.send(f"WebSocket connection with {name} not found.")
 
             elif message.content.startswith('!ping'):
-                await message.channel.send("yes")
+                await message.channel.send("Pong!")
 
             elif message.content.startswith('!list_subscriptions'):
                 if self.client.client_list:
@@ -269,7 +268,8 @@ class DiscordBot(discord.Client):
                 )
                 await message.channel.send(help_message)
         else:
-            await message.channel.send("You don't have permission to use WebSocket commands.")
+            if self.confirmation_message:
+                await message.channel.send("You don't have permission to use bot commands.")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
