@@ -125,14 +125,18 @@ class DiscordBot(discord.Client):
 
     async def send_message(self):
         while(True):
-            message = await message_queue.get()
-            if message:
-                logging.info(message)
-                if self.confirmation_message and message.startswith("Subscription with"):
-                    await self.send_message_to_channels(message)
-                elif not message.startswith("Subscription with"):
-                    await self.send_message_to_channels(message)
-                message_queue.task_done()
+            try: 
+                message = await message_queue.get()
+                if message:
+                    logging.info(message)
+                    if self.confirmation_message and message.startswith("Subscription with"):
+                        await self.send_message_to_channels(message)
+                    elif not message.startswith("Subscription with"):
+                        await self.send_message_to_channels(message)
+                    message_queue.task_done()
+            except Exception as e:
+                logging.info(f"Error: {e}")
+                pass
             
     async def on_ready(self):
         self.client = WebSocketClient()
@@ -211,7 +215,10 @@ class DiscordBot(discord.Client):
                     await message.channel.send(f"Channel {channel_name} not found.")
 
             elif message.content.startswith('!list_channels'):
-                channel_names = [channel.name for channel in self.channels]
+                channel_names = []
+                for channel in self.channels:
+                    if channel.guild == message.guild:
+                        channel_names.append(channel.name)
                 if channel_names:
                     await message.channel.send(f"Channels to send messages to: {', '.join(channel_names)}")
                 else:
