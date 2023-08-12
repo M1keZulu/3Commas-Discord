@@ -2,6 +2,7 @@ import discord
 import websocket
 import asyncio
 import time
+from datetime import datetime, timedelta
 import threading
 import json
 import hashlib
@@ -22,6 +23,30 @@ class WebSocketClient:
         self.url = "wss://ws.3commas.io/websocket"
         self.ws = None
         self.client_list = []
+        self.connection_lost=None
+    
+    def get_time_diff(self, timestamp):
+        now = datetime.utcnow()
+        input_time = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+        delta = now - input_time
+
+        if delta < timedelta(minutes=1):
+            return "just now"
+        elif delta < timedelta(hours=1):
+            minutes = delta.seconds // 60
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        elif delta < timedelta(days=1):
+            hours = delta.seconds // 3600
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        elif delta < timedelta(weeks=1):
+            days = delta.days
+            return f"{days} day{'s' if days != 1 else ''} ago"
+        elif delta < timedelta(days=30):
+            weeks = delta.days // 7
+            return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+        else:
+            months = delta.days // 30
+            return f"{months} month{'s' if months != 1 else ''} ago"
 
     def subscribe(self, name, api_key, secret_key):
         identifier = {
@@ -80,6 +105,8 @@ class WebSocketClient:
 
     def on_error(self, ws, error):
         logging.info(f"Error from {self.url}: {error}")
+        if error=='Connection to remote host was lost':
+            self.connection_lost = datetime.utcnow().isoformat()[:-3] + 'Z'
 
     def on_close(self, ws, close_status_code, close_msg):
         logging.info(f"Connection closed for {self.url}.")
@@ -97,6 +124,27 @@ class WebSocketClient:
             }
             self.ws.send(json.dumps({"identifier": json.dumps(identifier), "command": "subscribe"}))
         logging.info(f"Connected to {self.url}")
+        if self.connection_lost:
+            try:
+                current_time = datetime.utcnow().isoformat()[:-3] + 'Z'
+                for client in self.client_list:
+                    request = requests.get('https://api.3commas.io/public/api/ver1/deals?scope=finished&order=closed_at',
+               headers={'Apikey': client['api_key'],
+                        'Signature': hmac.new(client['secret_key'].encode(), b"/public/api/ver1/deals?scope=finished&order=closed_at", hashlib.sha256).hexdigest(),}
+                        )
+                    if request.status_code == 200:
+                        messages = request.json()
+                        for message in messages:
+                            emoji = '💰' if float(message['actual_profit']) > 0 else '😱'
+                            if message['localized_status'] == 'Closed at Market Price' and message['closed_at'] >= self.connection_lost and message['closed_at'] < current_time:
+                                message = f"{message['pair'].replace('_','/')} {message['localized_status']} {emoji} {message['actual_profit']} USDT ({message['actual_usd_profit']} $) ({message['actual_profit_percentage']}% from total volume) #market {self.get_time_diff(message['created_at'])} with MARCO POLO"
+                                message_queue.put_nowait(message)
+                self.connection_lost = None
+            except Exception as e:
+                logging.info(f"Error: {e}")
+                logging.info("Unable to retrieve messages via API.")
+                self.connection_lost = None
+
 
     def connect_to_websocket(self):
         self.ws = websocket.WebSocketApp(self.url,
@@ -242,7 +290,7 @@ class DiscordBot(discord.Client):
                 with open(f'{BACKUP_DISK_PATH}/channels.json', 'w') as f:
                     f.write(json.dumps([(channel.id, channel.guild.id) for channel in self.channels]))
                 await message.channel.send("Backed up clients and channels and guilds to file.")
-            
+
             elif message.content.startswith('!restore'):
                 if not os.path.exists(f'{BACKUP_DISK_PATH}/clients.json') or not os.path.exists(f'{BACKUP_DISK_PATH}/channels.json'):
                     await message.channel.send("No backup found.")
