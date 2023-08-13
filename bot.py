@@ -136,8 +136,13 @@ class WebSocketClient:
                         messages = request.json()
                         for message in messages:
                             emoji = '💰' if float(message['actual_profit']) > 0 else '😱'
+                            currency=""
+                            if message['profit_currency'] == 'quote_currency':
+                                currency = message['from_currency']
+                            else:
+                                currency=message['to_currency']
                             if message['localized_status'] == 'Closed at Market Price' and message['closed_at'] >= self.connection_lost and message['closed_at'] < current_time:
-                                message = f"{message['pair'].replace('_','/')} {message['localized_status']} {emoji} {message['actual_profit']} USDT ({message['actual_usd_profit']} $) ({message['actual_profit_percentage']}% from total volume) #market {self.get_time_diff(message['created_at'])} with MARCO POLO"
+                                message = f"{message['pair'].replace('_','/')} {message['localized_status']} {emoji} {message['actual_profit']} {currency} ({message['actual_usd_profit']} $) ({message['actual_profit_percentage']}% from total volume) #market {self.get_time_diff(message['created_at'])} with MARCO POLO"
                                 message_queue.put_nowait(message)
                 self.connection_lost = None
             except Exception as e:
