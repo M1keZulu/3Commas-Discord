@@ -11,10 +11,18 @@ import requests
 import os
 import google.cloud.logging
 import logging
+import tweepy
+import re
 
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 ALLOWED_ROLE_NAME = os.environ.get("ALLOWED_ROLE_NAME")
 BACKUP_DISK_PATH = os.environ.get("BACKUP_DISK_PATH")
+
+API_KEY = os.environ.get("API_KEY")
+API_SECRET = os.environ.get("API_SECRET")
+BEARER_TOKEN = r"" + os.environ.get("BEARER_TOKEN")
+ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN")
+ACCESS_TOKEN_SECRET = os.environ.get("ACCESS_TOKEN_SECRET")
 
 message_queue = asyncio.Queue()
 
@@ -91,21 +99,22 @@ class WebSocketClient:
                     self.client_list.remove(client)
                     break
         elif 'message' in data and 'type' in str(message) and message['type'] == 'Deal':
+            logging.info(f"{message}")
             pair = message['pair']
             pair = pair.replace('_', '/')
             name = ""
             for closed_event in message['bot_events']:
-                if "Closed at" in closed_event['message']:
+                if "Closed at" in closed_event['message'] or "completed" in closed_event['message']:
                     msg = closed_event['message']
                     for client in self.client_list:
                         if client['api_key'] == identifier['users'][0]['api_key'] and hmac.new(client['secret_key'].encode(), b"/deals", hashlib.sha256).hexdigest() == identifier['users'][0]['signature']:
                             name = client['name']
                             break
-                    message_queue.put_nowait(f"{name}: {pair} {msg} with MARCO POLO")
+                    message_queue.put_nowait(f"{name}: {pair} {msg}")
 
-    def on_error(self, ws, error):
-        logging.info(f"Error from {self.url}: {error}")
-        if error=='Connection to remote host was lost':
+    def on_error(self, ws, error_message):
+        logging.info(f"Error from {self.url}: {error_message}")
+        if error_message=='Connection to remote host was lost':
             self.connection_lost = datetime.utcnow().isoformat()[:-3] + 'Z'
 
     def on_close(self, ws, close_status_code, close_msg):
@@ -141,8 +150,8 @@ class WebSocketClient:
                                 currency = message['from_currency']
                             else:
                                 currency=message['to_currency']
-                            if message['localized_status'] == 'Closed at Market Price' and message['closed_at'] >= self.connection_lost and message['closed_at'] < current_time:
-                                message = f"{message['pair'].replace('_','/')} {message['localized_status']} {emoji} {message['actual_profit']} {currency} ({message['actual_usd_profit']} $) ({message['actual_profit_percentage']}% from total volume) #market {self.get_time_diff(message['created_at'])} with MARCO POLO"
+                            if (message['localized_status'] == 'Closed at Market Price' or message['localized_status'] == 'Completed') and message['closed_at'] >= self.connection_lost and message['closed_at'] < current_time:
+                                message = f"{message['pair'].replace('_','/')} {message['localized_status']} {emoji} {message['actual_profit']} {currency} ({message['actual_usd_profit']} $) ({message['actual_profit_percentage']}% from total volume) #market {self.get_time_diff(message['created_at'])}"
                                 message_queue.put_nowait(message)
                 self.connection_lost = None
             except Exception as e:
@@ -171,6 +180,18 @@ class DiscordBot(discord.Client):
         self.channels = []
         self.client = None
         self.confirmation_message = False
+        self.twitter_client = tweepy.Client(BEARER_TOKEN, API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
+        self.auth = tweepy.OAuth1UserHandler(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
+        self.api = tweepy.API(self.auth)
+
+    def send_tweet(self, message):
+        currency_matches = re.findall(r'\b(\w+/\w+)\b', message)
+        if currency_matches:
+            currencies = currency_matches[0].split('/')
+            result_string = f"${currencies[0]} / ${currencies[1]}"
+            message = message.replace(currency_matches[0], result_string)
+            message = message + " " + str(time.time())
+        self.twitter_client.create_tweet(text = message)
 
     async def send_message_to_channels(self, message):
         for channel in self.channels:
@@ -186,6 +207,9 @@ class DiscordBot(discord.Client):
                         await self.send_message_to_channels(message)
                     elif not message.startswith("Subscription with"):
                         await self.send_message_to_channels(message)
+                        thread = threading.Thread(target=self.send_tweet, args=(message,))
+                        thread.daemon = True
+                        thread.start()
                     message_queue.task_done()
             except Exception as e:
                 logging.info(f"Error: {e}")

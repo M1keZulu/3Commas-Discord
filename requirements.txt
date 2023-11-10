@@ -32,3 +32,4 @@ six==1.16.0
 urllib3==1.26.16
 websocket-client==1.6.1
 yarl==1.9.2
+tweepy
